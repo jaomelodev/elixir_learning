@@ -2,146 +2,89 @@ defmodule Katas.Report do
   @type summary_stats :: %{
           count: integer(),
           total_cents: integer(),
-          first_date: Calendar.date(),
-          last_date: Calendar.date()
+          first_date: Calendar.date() | nil,
+          last_date: Calendar.date() | nil
         }
 
   @doc ~S"""
-  Takes lines like `"2026-01-15;lunch;R$ 35,50"` and produces a map `%{count: n, total_cents: t, first_date: %Date{}, last_date: %Date{}}`.
+  Takes a list of lines like `"2026-01-15;lunch;R$ 35,50"` and produces a map
+  `%{count: n, total_cents: t, first_date: %Date{}, last_date: %Date{}}`.
+  Malformed lines are skipped.
 
   ## Example
 
-      iex> Katas.Report.summary("2026-01-15;lunch;R$ 35,50;2027-20-20;R$ 0.00;R$ 100,00;2026-11-16")
-      %{count: 5, total_cents: 13550, first_date: ~D[2026-01-15], last_date: ~D[2026-11-16]}
+      iex> Katas.Report.summary(["2026-01-15;lunch;R$ 35,50", "garbage", "2026-02-20;coffee;R$ 0,00", "2026-11-16;dinner;R$ 100,00"])
+      %{count: 3, total_cents: 13550, first_date: ~D[2026-01-15], last_date: ~D[2026-11-16]}
   """
-  @spec summary(binary()) :: summary_stats()
-  def summary(list_of_raw_strings) when is_binary(list_of_raw_strings) do
-    list_of_raw_strings
-    |> String.split(";")
-    |> Enum.reduce(%{count: 0, total_cents: 0, first_date: nil, last_date: nil}, fn string, acc ->
-      handle_item(string, acc)
-    end)
-  end
-
-  @spec handle_item(binary(), summary_stats()) :: summary_stats()
-  defp handle_item(string, acc) do
-    %{
-      count: count,
-      total_cents: total_cents,
-      first_date: first_date,
-      last_date: last_date
-    } = acc
-
-    parse_item(string)
-    |> case do
-      {:ok, :date, date} ->
-        %{
-          count: count + 1,
-          total_cents: total_cents,
-          first_date: first_date || date,
-          last_date: date
-        }
-
-      {:ok, :cents, cents} ->
-        %{
-          count: count + 1,
-          total_cents: total_cents + cents,
-          first_date: first_date,
-          last_date: last_date
-        }
-
-      _other ->
-        acc
-    end
-  end
-
-  @spec parse_item(binary()) ::
-          {:ok, :date, Calendar.date()} | {:ok, :cents, integer()} | {:error, :invalid}
-  defp(parse_item(string) when is_binary(string)) do
-    parse_date(string)
-    |> case do
-      {:ok, value} ->
-        {:ok, :date, value}
-
-      _other ->
-        parse_reals(string)
-        |> case do
-          {:ok, value} -> {:ok, :cents, value}
-          _other -> {:error, :invalid}
-        end
-    end
-  end
-
-  @spec parse_reals(binary()) :: {:ok, integer()} | {:error, :invalid}
-  defp parse_reals(string) when is_binary(string) do
-    case String.starts_with?(string, "R$") do
-      false ->
-        {:error, :invalid}
-
-      true ->
-        string
-        |> String.replace(~r/\D+/u, "")
-        |> Integer.parse()
-        |> case do
-          :error -> {:error, :invalid}
-          {value, _} -> {:ok, value}
-        end
-    end
-  end
-
-  @spec parse_date(binary()) :: {:ok, Calendar.date()} | {:error, atom()}
-  defp parse_date(string) when is_binary(string) do
-    Date.from_iso8601(string)
+  @spec summary([binary()]) :: summary_stats()
+  def summary(lines) when is_list(lines) do
+    lines
+    |> Enum.map(&parse_line/1)
+    |> Enum.reject(&(&1 == :error))
+    |> Enum.reduce(empty_summary(), &add_record/2)
   end
 
   @doc ~S"""
-  Takes lines like `"2026-01-15;R$ 35,50"` and produces a map `%{count: n, total_cents: t, first_date: %Date{}, last_date: %Date{}}`. It raise if the input is malformed
+  Like `summary/1`, but raises on the first malformed line.
 
   ## Example
 
-      iex> Katas.Report.summary!("2026-01-15;R$ 35,50;R$ 0.00;R$ 100,00;2026-11-16")
-      %{count: 5, total_cents: 13550, first_date: ~D[2026-01-15], last_date: ~D[2026-11-16]}
-      iex> Katas.Report.summary!("2026-01-15;lunch;R$ 35,50;2027-20-20;R$ 0.00;R$ 100,00;2026-11-16")
-      ** (RuntimeError) Invalid string
+      iex> Katas.Report.summary!(["2026-01-15;lunch;R$ 35,50", "2026-11-16;dinner;R$ 100,00"])
+      %{count: 2, total_cents: 13550, first_date: ~D[2026-01-15], last_date: ~D[2026-11-16]}
+      iex> Katas.Report.summary!(["2026-01-15;lunch;R$ 35,50", "garbage"])
+      ** (RuntimeError) Invalid line: "garbage"
   """
-  @spec summary!(binary()) :: summary_stats()
-  def summary!(list_of_raw_strings) when is_binary(list_of_raw_strings) do
-    list_of_raw_strings
-    |> String.split(";")
-    |> Enum.reduce(%{count: 0, total_cents: 0, first_date: nil, last_date: nil}, fn string, acc ->
-      handle_item!(string, acc)
-    end)
+  @spec summary!([binary()]) :: summary_stats()
+  def summary!(lines) when is_list(lines) do
+    lines
+    |> Enum.map(&parse_line!/1)
+    |> Enum.reduce(empty_summary(), &add_record/2)
   end
 
-  @spec handle_item!(binary(), summary_stats()) :: summary_stats()
-  defp handle_item!(string, acc) do
+  @spec empty_summary() :: summary_stats()
+  defp empty_summary do
+    %{count: 0, total_cents: 0, first_date: nil, last_date: nil}
+  end
+
+  @spec add_record(%{date: Calendar.date(), cents: integer()}, summary_stats()) :: summary_stats()
+  defp add_record(%{date: date, cents: cents}, acc) do
     %{
-      count: count,
-      total_cents: total_cents,
-      first_date: first_date,
-      last_date: last_date
-    } = acc
+      count: acc.count + 1,
+      total_cents: acc.total_cents + cents,
+      first_date: acc.first_date || date,
+      last_date: date
+    }
+  end
 
-    parse_item(string)
-    |> case do
-      {:ok, :date, date} ->
-        %{
-          count: count + 1,
-          total_cents: total_cents,
-          first_date: first_date || date,
-          last_date: date
-        }
-
-      {:ok, :cents, cents} ->
-        %{
-          count: count + 1,
-          total_cents: total_cents + cents,
-          first_date: first_date,
-          last_date: last_date
-        }
-
-      _other ->
-        raise "Invalid string"
+  @spec parse_line(binary()) :: %{date: Calendar.date(), cents: integer()} | :error
+  defp parse_line(line) when is_binary(line) do
+    with [date_str, _desc, amount_str] <- String.split(line, ";"),
+         {:ok, date} <- Date.from_iso8601(date_str),
+         {:ok, cents} <- parse_amount(amount_str) do
+      %{date: date, cents: cents}
+    else
+      _ -> :error
     end
   end
+
+  @spec parse_line!(binary()) :: %{date: Calendar.date(), cents: integer()}
+  defp parse_line!(line) when is_binary(line) do
+    case parse_line(line) do
+      :error -> raise "Invalid line: #{inspect(line)}"
+      record -> record
+    end
+  end
+
+  @spec parse_amount(binary()) :: {:ok, integer()} | {:error, :invalid}
+  defp parse_amount("R$" <> _ = string) do
+    string
+    |> String.replace(~r/\D+/u, "")
+    |> Integer.parse()
+    |> case do
+      {value, _} -> {:ok, value}
+      :error -> {:error, :invalid}
+    end
+  end
+
+  defp parse_amount(_other), do: {:error, :invalid}
 end

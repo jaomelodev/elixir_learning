@@ -38,7 +38,7 @@ defmodule Katas.Money do
     cents =
       rem(money, 100)
       |> Integer.to_string()
-      |> String.pad_trailing(2, "0")
+      |> String.pad_leading(2, "0")
 
     "R$ " <> reals <> "," <> cents
   end
@@ -50,7 +50,7 @@ defmodule Katas.Money do
     t = t |> Enum.chunk_every(3) |> Enum.join(".")
 
     case {h, t} do
-      {"", _} -> t
+      {[], _} -> t
       {_, ""} -> "#{h}"
       _ -> "#{h}." <> t
     end

@@ -76,8 +76,8 @@ Not code — a habit. In `iex -S mix`, demonstrate to yourself (no deliverable, 
 
 ## Done when
 
-- [ ] `mix test` green, including doctests
-- [ ] At least 15 tests total across the modules
-- [ ] Zero `if` expressions (`grep -rn "if " lib/` — comprehension keywords don't count)
-- [ ] `mix format --check-formatted` passes
-- [ ] You can explain (to yourself) why `"héllo"` is 6 bytes, and what `{:error, :invalid}` buys you over raising
+- [x] `mix test` green, including doctests
+- [x] At least 15 tests total across the modules
+- [x] Zero `if` expressions (`grep -rn "if " lib/` — comprehension keywords don't count)
+- [x] `mix format --check-formatted` passes
+- [x] You can explain (to yourself) why `"héllo"` is 6 bytes, and what `{:error, :invalid}` buys you over raising
