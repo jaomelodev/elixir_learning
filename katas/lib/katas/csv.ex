@@ -1,58 +1,52 @@
 defmodule Katas.Csv do
-  @type csv_row_parsed :: %{
-          name: String.t(),
-          email: String.t(),
-          age: String.t(),
-          joined_on: String.t()
-        }
+  @type csv_row_parsed :: %{String.t() => String.t()}
 
   @type indexed_row :: {String.t(), integer()}
 
   @spec parse(binary()) :: {:ok, list(csv_row_parsed())} | {:error, {:bad_row, integer()}}
   @doc """
-  Parses lines of `name;email;age;joined_on` into a list of maps with **string keys** (`%{"name" => ..., ...}`)
+  Parses lines of `name;email;age;joined_on` into a list of maps with **string keys** (`%{"name" => ..., ...}`).
+
+  Skips empty lines, trims trailing whitespace, and aborts the whole parse with
+  `{:error, {:bad_row, line_number}}` (1-based) on the first malformed row.
   """
   def parse(string) when is_binary(string) do
-    indexed_row_list =
-      string
-      |> String.split(["\r\n", "\n"])
-      |> Enum.with_index()
-      |> List.delete_at(0)
-      |> Enum.reduce([], &filter_empty_rows/2)
-      |> Enum.reverse()
-
-    try do
-      {:ok, Enum.map(indexed_row_list, &parse_csv_row_throw/1)}
-    catch
-      :throw, value -> value
-    end
-  end
-
-  @spec filter_empty_rows(indexed_row(), list(indexed_row())) :: list(indexed_row())
-  defp filter_empty_rows({row, index}, acc)
-       when is_binary(row) and is_integer(index) and is_list(acc) do
-    row
-    |> String.trim()
-    |> String.length()
+    string
+    |> String.split(["\r\n", "\n"])
+    |> Enum.with_index(1)
+    |> Enum.drop(1)
+    |> Enum.reduce_while([], fn indexed_row, acc ->
+      case parse_csv_row(indexed_row) do
+        :skip -> {:cont, acc}
+        {:ok, row} -> {:cont, [row | acc]}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
     |> case do
-      0 -> acc
-      _ -> [{row, index} | acc]
+      {:error, _} = error -> error
+      rows -> {:ok, Enum.reverse(rows)}
     end
   end
 
-  @spec parse_csv_row_throw(indexed_row()) :: csv_row_parsed()
-  defp parse_csv_row_throw({row, index}) when is_binary(row) and is_integer(index) do
-    with row_splited = String.split(row, ";"), 4 <- length(row_splited) do
-      [name, email, age, joined_on] = Enum.map(row_splited, &String.trim/1)
-
-      %{
-        "name" => name,
-        "email" => email,
-        "age" => age,
-        "joined_on" => joined_on
-      }
+  @spec parse_csv_row(indexed_row()) ::
+          :skip | {:ok, csv_row_parsed()} | {:error, {:bad_row, integer()}}
+  defp parse_csv_row({row, line}) when is_binary(row) and is_integer(line) do
+    if String.trim(row) == "" do
+      :skip
     else
-      _ -> throw({:error, {:bad_row, index + 1}})
+      case String.split(row, ";") do
+        [name, email, age, joined_on] ->
+          {:ok,
+           %{
+             "name" => String.trim(name),
+             "email" => String.trim(email),
+             "age" => String.trim(age),
+             "joined_on" => String.trim(joined_on)
+           }}
+
+        _ ->
+          {:error, {:bad_row, line}}
+      end
     end
   end
 end
