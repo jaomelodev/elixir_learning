@@ -67,7 +67,18 @@ defmodule Katas.Csv do
         |> Stream.chunk_every(5)
         |> Enum.with_index()
         |> Enum.map(&Task.async(fn -> process_chunk(&1) end))
-        |> Enum.map(&Task.await(&1))
+        |> Enum.reduce_while([], fn task, acc ->
+          task
+          |> Task.await()
+          |> case do
+            {:ok, list} -> {:cont, [list | acc]}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:error, _} = error -> error
+          rows -> {:ok, Enum.reverse(rows)}
+        end
 
       {:error, _} ->
         {:error, :file_not_found}
@@ -75,10 +86,8 @@ defmodule Katas.Csv do
   end
 
   defp process_chunk({chunk, index}) do
-    IO.puts("#{index}")
-
     chunk
-    |> Enum.with_index(1)
+    |> Enum.with_index(2)
     |> Enum.reduce_while([], fn {row, row_index}, acc ->
       case parse_csv_row({row, row_index + index * 5}) do
         :skip -> {:cont, acc}
