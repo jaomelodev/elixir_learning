@@ -50,54 +50,36 @@ defmodule Katas.Csv do
     end
   end
 
-  @spec parse_stream(binary()) :: {:ok, list(csv_row_parsed())} | {:error, {atom(), integer()}}
+  @spec parse_stream(binary()) :: Enumerable.t()
   @doc """
-  Parses lines `name;email;age;joined_on` from a csv file into a list of maps with **string keys** (`%{"name" => ..., ...}`).
+  Lazily parses `name;email;age;joined_on` from a file into a **stream** of maps
+  with **string keys** (`%{"name" => ..., ...}`), skipping the header and blank lines.
 
-  Skips empty lines, trims trailing whitespace, and aborts the whole parse with
-  `{:error, {:bad_row, line_number}}` (1-based) on the first malformed row.
+  Reads incrementally via `File.stream!/1`. `Enum.take(parse_stream(path), 5)`
+  touches only the first handful of lines — a 1M-line file never loads into memory.
+  Nothing happens until the returned stream is enumerated.
+
+  Unlike `parse/1`, a lazy stream cannot return `{:error, {:bad_row, n}}` as its
+  value: a row isn't seen until enumeration reaches it. A malformed row therefore
+  **raises** (with its 1-based line number) mid-stream. Reach for `parse/1` when you
+  want the whole list up front with a tagged-tuple error instead.
+
+  Whitespace is trimmed per field. A missing file raises `File.Error` on enumeration.
   """
   def parse_stream(path) when is_binary(path) do
     path
-    |> File.stat()
-    |> case do
-      {:ok, _} ->
-        File.stream!(path)
-        |> Stream.drop(1)
-        |> Stream.chunk_every(5)
-        |> Enum.with_index()
-        |> Enum.map(&Task.async(fn -> process_chunk(&1) end))
-        |> Enum.reduce_while([], fn task, acc ->
-          task
-          |> Task.await()
-          |> case do
-            {:ok, list} -> {:cont, [list | acc]}
-            {:error, _} = error -> {:halt, error}
-          end
-        end)
-        |> case do
-          {:error, _} = error -> error
-          rows -> {:ok, Enum.reverse(rows)}
+    |> File.stream!()
+    |> Stream.with_index(1)
+    |> Stream.flat_map(fn
+      {_line, 1} ->
+        []
+
+      {line, index} ->
+        case parse_csv_row({line, index}) do
+          :skip -> []
+          {:ok, row} -> [row]
+          {:error, {:bad_row, n}} -> raise "malformed CSV row at line #{n}"
         end
-
-      {:error, _} ->
-        {:error, :file_not_found}
-    end
-  end
-
-  defp process_chunk({chunk, index}) do
-    chunk
-    |> Enum.with_index(2)
-    |> Enum.reduce_while([], fn {row, row_index}, acc ->
-      case parse_csv_row({row, row_index + index * 5}) do
-        :skip -> {:cont, acc}
-        {:ok, row} -> {:cont, [row | acc]}
-        {:error, _} = error -> {:halt, error}
-      end
     end)
-    |> case do
-      {:error, _} = error -> error
-      rows -> {:ok, Enum.reverse(rows)}
-    end
   end
 end
