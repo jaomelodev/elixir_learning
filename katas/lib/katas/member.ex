@@ -5,71 +5,87 @@ defmodule Katas.Member do
 
   @type validation_result(value) :: {:ok, value} | {:error, String.t()}
 
-  @spec new(%{name: String.t(), email: String.t(), age: String.t(), joined_on: String.t()}) ::
+  @spec new(%{optional(String.t()) => String.t() | nil}) ::
           {:ok, %Member{}} | {:error, %{atom() => String.t()}}
   @doc """
-  `Member.new(map_with_string_keys)` returns `{:ok, %Member{}}` or `{:error, errors}` where `errors` is a map like `%{age: "must be a positive integer", email: "is invalid"}`
+  `Member.new(map_with_string_keys)` returns `{:ok, %Member{}}` or `{:error, errors}`
+  where `errors` is a map like `%{age: "must be a positive integer", email: "is invalid"}`.
+
+  Accumulates *all* errors, not just the first.
+
+  ## Type checker note (Elixir 1.20)
+
+  Calling `new/1` with a wrong type is caught only at the `is_map/1` boundary:
+  `new(:not_a_map)` is flagged by the set-theoretic checker because the spec input
+  is a map. What it *cannot* catch: a map whose string values are wrong domain data
+  (`%{"age" => "abc"}`) — those are valid `String.t()` to the type system, so the
+  type checker stays silent and our runtime validators do the work. That gap is
+  exactly why hand-rolled validation (and later Ecto changesets) exists.
   """
-  def new(%{name: name, email: email, age: age, joined_on: joined_on})
-      when is_binary(name) and
-             is_binary(email) and
-             (is_binary(age) or is_nil(age)) and
-             (is_binary(joined_on) or is_nil(joined_on)) do
+  def new(map) when is_map(map) do
     [
-      {:email, validate_email(email)},
-      {:age, validate_age(age)},
-      {:joined_on, validate_joined_on(joined_on)}
+      {:name, validate_name(Map.get(map, "name"))},
+      {:email, validate_email(Map.get(map, "email"))},
+      {:age, validate_age(Map.get(map, "age"))},
+      {:joined_on, validate_joined_on(Map.get(map, "joined_on"))}
     ]
-    |> Enum.reduce(%{data: %{name: name}, errors: %{}}, fn {key, result}, acc ->
-      result
-      |> case do
-        {:ok, value} -> Map.put(acc, :data, Map.put(acc.data, key, value))
-        {:error, message} -> Map.put(acc, :errors, Map.put(acc.errors, key, message))
+    |> Enum.reduce(%{data: %{}, errors: %{}}, fn {key, result}, acc ->
+      case result do
+        {:ok, value} -> %{acc | data: Map.put(acc.data, key, value)}
+        {:error, message} -> %{acc | errors: Map.put(acc.errors, key, message)}
       end
     end)
     |> case do
-      %{data: %{name: name, email: email, age: age, joined_on: joined_on}} ->
-        {:ok, %Member{name: name, email: email, age: age, joined_on: joined_on}}
+      %{data: data, errors: errors} when errors == %{} ->
+        {:ok, struct!(Member, data)}
 
-      %{data: _, errors: errors} ->
+      %{errors: errors} ->
         {:error, errors}
     end
   end
 
-  def new(_) do
-    {:error, "invalid params"}
-  end
+  def new(_), do: {:error, "invalid params"}
 
-  @spec validate_email(String.t()) :: validation_result(String.t())
-  defp validate_email(email) when is_binary(email) do
-    email
-    |> String.match?(~r/^[A-Za-z0-9._%+\-+']+@[A-Za-z0-9.-]+\.[A-Za-z]+$/)
-    |> case do
-      true -> {:ok, email}
-      _ -> {:error, "is invalid"}
+  @spec validate_name(String.t() | nil) :: validation_result(String.t())
+  defp validate_name(nil), do: {:error, "is required"}
+
+  defp validate_name(name) when is_binary(name) do
+    cond do
+      String.trim(name) == "" -> {:error, "can't be blank"}
+      String.length(name) > 100 -> {:error, "must be at most 100 characters"}
+      true -> {:ok, name}
     end
   end
 
-  @spec validate_age(String.t() | nil) :: validation_result(integer())
-  defp validate_age(age) when is_binary(age) or is_nil(age) do
-    with {age_parsed, ""} <- Integer.parse(age), true <- age_parsed in 0..150 do
-      {:ok, age_parsed}
+  @spec validate_email(String.t() | nil) :: validation_result(String.t())
+  defp validate_email(nil), do: {:error, "is required"}
+
+  defp validate_email(email) when is_binary(email) do
+    if String.match?(email, ~r/^[^@\s]+@[^@\s]+$/) do
+      {:ok, email}
+    else
+      {:error, "is invalid"}
+    end
+  end
+
+  @spec validate_age(String.t() | nil) :: validation_result(integer() | nil)
+  defp validate_age(age) when age in [nil, ""], do: {:ok, nil}
+
+  defp validate_age(age) when is_binary(age) do
+    with {parsed, ""} <- Integer.parse(age), true <- parsed in 0..150 do
+      {:ok, parsed}
     else
       _ -> {:error, "must be a positive integer between 0 and 150"}
     end
   end
 
-  @spec validate_joined_on(String.t() | nil) :: validation_result(Calendar.date())
-  defp validate_joined_on(date_string) when is_binary(date_string) or is_nil(date_string) do
-    if date_string == nil do
-      {:ok, Date.utc_today()}
-    else
-      date_string
-      |> Date.from_iso8601()
-      |> case do
-        {:ok, date} -> {:ok, date}
-        _ -> {:error, "must be yyyy-mm-dd string"}
-      end
+  @spec validate_joined_on(String.t() | nil) :: validation_result(Date.t())
+  defp validate_joined_on(date_string) when date_string in [nil, ""], do: {:ok, Date.utc_today()}
+
+  defp validate_joined_on(date_string) when is_binary(date_string) do
+    case Date.from_iso8601(date_string) do
+      {:ok, date} -> {:ok, date}
+      _ -> {:error, "must be yyyy-mm-dd string"}
     end
   end
 end

@@ -166,10 +166,10 @@ defmodule Katas.CsvTest do
 
       stream = Katas.Csv.parse_stream(path)
 
-      # A composed lazy stream is enumerable but not an eager list. Nothing is
-      # read until enumerated.
+      # A composed lazy stream is a function (Stream.transform), not an eager
+      # list. Nothing is read until enumerated.
       refute is_list(stream)
-      assert Enumerable.impl_for(stream) != nil
+      assert is_function(stream, 2)
     end
 
     test "enumerates to the same rows parse/1 returns" do
