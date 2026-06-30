@@ -50,19 +50,22 @@ defmodule Katas.Csv do
     end
   end
 
-  @spec parse_stream(binary()) :: Enumerable.t()
+  @type stream_element ::
+          {integer(), csv_row_parsed()} | {:error, {:bad_row, integer()}}
+
+  @spec parse_stream(binary()) :: Enumerable.t(stream_element())
   @doc """
-  Lazily parses `name;email;age;joined_on` from a file into a **stream** of maps
-  with **string keys** (`%{"name" => ..., ...}`), skipping the header and blank lines.
+  Lazily parses `name;email;age;joined_on` from a file into a **stream** of
+  `{line_number, row}` tuples, where `row` is a map with **string keys**
+  (`%{"name" => ..., ...}`) and `line_number` is the 1-based file line. Skips the
+  header and blank lines.
+
+  Malformed rows do not raise — instead `{:error, {:bad_row, n}}` is emitted
+  inline at that position, so enumeration continues past bad rows.
 
   Reads incrementally via `File.stream!/1`. `Enum.take(parse_stream(path), 5)`
   touches only the first handful of lines — a 1M-line file never loads into memory.
   Nothing happens until the returned stream is enumerated.
-
-  Unlike `parse/1`, a lazy stream cannot return `{:error, {:bad_row, n}}` as its
-  value: a row isn't seen until enumeration reaches it. A malformed row therefore
-  **raises** (with its 1-based line number) mid-stream. Reach for `parse/1` when you
-  want the whole list up front with a tagged-tuple error instead.
 
   Whitespace is trimmed per field. A missing file raises `File.Error` on enumeration.
   """
@@ -77,8 +80,8 @@ defmodule Katas.Csv do
       {line, index} ->
         case parse_csv_row({line, index}) do
           :skip -> []
-          {:ok, row} -> [row]
-          {:error, {:bad_row, n}} -> raise "malformed CSV row at line #{n}"
+          {:ok, row} -> [{index, row}]
+          {:error, _} = error -> [error]
         end
     end)
   end

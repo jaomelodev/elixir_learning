@@ -178,20 +178,30 @@ defmodule Katas.CsvTest do
 
       {:ok, parsed} = Katas.Csv.parse(content)
 
-      assert Enum.to_list(Katas.Csv.parse_stream(path)) == parsed
+      streamed = Enum.map(Enum.to_list(Katas.Csv.parse_stream(path)), fn {_line, row} -> row end)
+      assert streamed == parsed
     end
 
     test "yields maps with string keys, never atom keys" do
       path = write_tmp("name;email;age;joined_on\nAlice;a@x.com;30;2026-01-15\n")
 
-      assert [row] = Enum.to_list(Katas.Csv.parse_stream(path))
+      assert [{_line, row}] = Enum.to_list(Katas.Csv.parse_stream(path))
       assert Map.keys(row) |> Enum.all?(&is_binary/1)
+    end
+
+    test "pairs each row with its 1-based file line number" do
+      path =
+        write_tmp(
+          "name;email;age;joined_on\nAlice;a@x.com;30;2026-01-15\n\nBob;b@x.com;25;2026-05-20\n"
+        )
+
+      assert [{2, _alice}, {4, _bob}] = Enum.to_list(Katas.Csv.parse_stream(path))
     end
 
     test "trims whitespace on each field" do
       path = write_tmp("name;email;age;joined_on\n  Alice  ; a@x.com ;30; 2026-01-15 \n")
 
-      assert [row] = Enum.to_list(Katas.Csv.parse_stream(path))
+      assert [{_line, row}] = Enum.to_list(Katas.Csv.parse_stream(path))
 
       assert row == %{
                "name" => "Alice",
@@ -220,16 +230,32 @@ defmodule Katas.CsvTest do
       path = write_tmp(build_csv(30))
 
       rows = Enum.to_list(Katas.Csv.parse_stream(path))
-      assert Enum.map(rows, & &1["name"]) == Enum.map(1..30, &"Name#{&1}")
+      assert Enum.map(rows, fn {_line, row} -> row["name"] end) == Enum.map(1..30, &"Name#{&1}")
     end
 
-    test "raises with the 1-based line number on a malformed row" do
-      # bad row at file line 4 (header=1, data rows start at 2)
-      path = write_tmp(build_csv(5, 4))
+    test "emits {:error, {:bad_row, n}} inline and keeps going past a malformed row" do
+      # bad row at file line 3 (header=1, data rows start at 2)
+      path = write_tmp(build_csv(3, 3))
 
-      assert_raise RuntimeError, ~r/line 4/, fn ->
-        Enum.to_list(Katas.Csv.parse_stream(path))
-      end
+      expected_result = [
+        {2,
+         %{
+           "age" => "30",
+           "email" => "name1@x.com",
+           "joined_on" => "2026-01-15",
+           "name" => "Name1"
+         }},
+        {:error, {:bad_row, 3}},
+        {4,
+         %{
+           "age" => "30",
+           "email" => "name3@x.com",
+           "joined_on" => "2026-01-15",
+           "name" => "Name3"
+         }}
+      ]
+
+      assert Enum.to_list(Katas.Csv.parse_stream(path)) == expected_result
     end
 
     test "does not raise on a bad row past the rows actually taken (laziness)" do
@@ -262,8 +288,8 @@ defmodule Katas.CsvTest do
       used = :erlang.memory(:total) - before
 
       assert length(rows) == 5
-      assert Enum.at(rows, 0)["name"] == "Name1"
-      assert Enum.at(rows, 4)["name"] == "Name5"
+      assert elem(Enum.at(rows, 0), 1)["name"] == "Name1"
+      assert elem(Enum.at(rows, 4), 1)["name"] == "Name5"
 
       # Pulling 5 rows must not allocate anything near the whole-file size.
       assert used < 20_000_000,
